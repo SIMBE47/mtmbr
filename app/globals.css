@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@theme {
+  --color-soft-black: #080808;
+  --color-charcoal: #0F0F0F;
+  --color-off-white: #F8F5EF;
+  --color-lime: #B7F34A;
+  --color-muted-gray: #76736D;
+  --color-burgundy: #7B2434;
+
+  --font-fashion: "Arial Black", "Trebuchet MS", "Helvetica Neue", sans-serif;
+  --font-editorial: Georgia, "Times New Roman", serif;
+  --font-display: "Trebuchet MS", "Helvetica Neue", Arial, sans-serif;
+  --font-bubbly: "Trebuchet MS", "Arial Rounded MT Bold", Arial, sans-serif;
+
+  --animate-marquee: marquee 30s linear infinite;
+
+  @keyframes marquee {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
+  }
+}
+
+:root {
+  --background: #080808;
+  --foreground: #F8F5EF;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
