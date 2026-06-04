@@ -13,10 +13,11 @@ const DARAJA_PASSKEY         = Deno.env.get("DARAJA_PASSKEY")!
 const DARAJA_CALLBACK_URL    = Deno.env.get("DARAJA_CALLBACK_URL")!
 const SUPABASE_URL           = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+const IS_PRODUCTION          = Deno.env.get("IS_PRODUCTION") === "true"
 
-// Use sandbox in dev, production in live
-// Change to "https://api.safaricom.co.ke" when you go live
-const DARAJA_BASE = "https://sandbox.safaricom.co.ke"
+const DARAJA_BASE = IS_PRODUCTION
+  ? "https://api.safaricom.co.ke"
+  : "https://sandbox.safaricom.co.ke"
 
 async function getAccessToken(): Promise<string> {
   const credentials = btoa(`${DARAJA_CONSUMER_KEY}:${DARAJA_CONSUMER_SECRET}`)
@@ -34,7 +35,6 @@ serve(async (req) => {
 
   const url = new URL(req.url)
 
-  // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
       const { action, amount, phoneNumber, orderId } = await req.json()
@@ -73,7 +73,6 @@ serve(async (req) => {
 
       const result = await res.json()
 
-      // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
         const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
@@ -96,8 +95,6 @@ serve(async (req) => {
     }
   }
 
-  // ── CALLBACK — Safaricom calls this when payment is confirmed or fails ──────
-  // URL: https://your-project.supabase.co/functions/v1/mpesa/callback
   if (req.method === "POST" && url.pathname.endsWith("/callback")) {
     try {
       const body          = await req.json()
@@ -111,37 +108,61 @@ serve(async (req) => {
       const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
       if (ResultCode === 0) {
-        // ✅ Payment successful — update order to PAID, mark listing as sold
         const { data: order } = await supabase
           .from("orders")
           .update({ status: "paid" })
           .eq("daraja_checkout_request_id", CheckoutRequestID)
-          .select("id, listing_id, store_id, total_amount, buyer_id")
+          .select("*, stores(phone)")
           .single()
 
         if (order) {
-          // Mark listing as reserved so no one else can buy it
           await supabase
             .from("listings")
             .update({ status: "reserved" })
             .eq("id", order.listing_id)
+
+          // 1. Notify Store Owner via SMS
+          if (order.stores?.phone) {
+             try {
+                await fetch(`${SUPABASE_URL}/functions/v1/sms`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` },
+                    body: JSON.stringify({
+                        to: order.stores.phone,
+                        message: `THRIFTR: New order for ${order.listing_name}! KES ${order.total_amount} is held in escrow. Please prepare the item.`
+                    })
+                })
+             } catch (smsErr) {
+                 console.error("Failed to send SMS to owner:", smsErr)
+             }
+          }
+
+          // 2. Trigger Uber Direct if applicable
+          if (order.delivery_method === 'uber') {
+             try {
+                await fetch(`${SUPABASE_URL}/functions/v1/uber`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}` },
+                    body: JSON.stringify({ orderId: order.id })
+                })
+             } catch (uberErr) {
+                 console.error("Failed to trigger Uber Direct:", uberErr)
+             }
+          }
         }
       } else {
-        // ❌ Payment failed or cancelled — reset order to pending
         await supabase
           .from("orders")
           .update({ status: "cancelled" })
           .eq("daraja_checkout_request_id", CheckoutRequestID)
       }
 
-      // Always return 200 to Safaricom or they'll retry
       return new Response(
         JSON.stringify({ ResultCode: 0, ResultDesc: "Accepted" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     } catch (err) {
       console.error("M-Pesa callback error:", err)
-      // Still return 200 — Safaricom retries on non-200 responses
       return new Response(
         JSON.stringify({ ResultCode: 0, ResultDesc: "Accepted" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -5,18 +5,19 @@ import Navbar from '@/components/ui/Navbar'
 import Footer from '@/components/ui/Footer'
 import { supabase } from '@/lib/supabase'
 import { formatCurrency, cn } from '@/lib/utils'
-import { ShoppingBag, DollarSign, Package, ExternalLink, Plus, CheckCircle2, X, Upload } from 'lucide-react'
 import Image from 'next/image'
+import { Store, User, ExternalLink, Plus, X, Upload, CheckCircle2 } from 'lucide-react'
 
 export default function Dashboard() {
+  const [, setUser] = useState<any>(null)
+  const [profile, setProfile] = useState<any>(null)
   const [store, setStore] = useState<any>(null)
   const [listings, setListings] = useState<any[]>([])
   const [orders, setOrders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('inventory')
+  const [activeTab, setActiveTab] = useState<'listings' | 'orders'>('orders')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
-
   const [newListing, setNewListing] = useState({
     name: '',
     price: '',
@@ -25,8 +26,7 @@ export default function Dashboard() {
     grade: 'A',
     brand: '',
     description: '',
-    imageUrls: '',
-    images: [] as string[]
+    imageUrls: ''
   })
 
   useEffect(() => {
@@ -36,6 +36,14 @@ export default function Dashboard() {
         window.location.href = '/'
         return
       }
+      setUser(user)
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
+      setProfile(profile)
 
       const { data: storeData } = await supabase
         .from('stores')
@@ -83,7 +91,7 @@ export default function Dashboard() {
       let recipientPhone = ''
 
       if (newStatus === 'ready') {
-        smsMessage = `THRIFTR: Your order for ${order.listing_name} is ready! Courier is being dispatched.`
+        smsMessage = `THRIFTR: Your order for ${order.listing_name} is ready! Packaging complete and courier is being dispatched.`
         recipientPhone = order.phone_number
       } else if (newStatus === 'delivered') {
         smsMessage = `THRIFTR: Your item ${order.listing_name} has been delivered. Please confirm receipt in your dashboard to release payment.`
@@ -92,10 +100,10 @@ export default function Dashboard() {
         smsMessage = `THRIFTR: Payment of ${formatCurrency(order.total_amount)} for ${order.listing_name} has been released to your M-Pesa.`
         const { data: storeContact } = await supabase
           .from('stores')
-          .select('contact_phone, whatsapp_phone')
+          .select('phone')
           .eq('id', order.store_id)
           .single()
-        recipientPhone = storeContact?.contact_phone || storeContact?.whatsapp_phone || ''
+        recipientPhone = storeContact?.phone || ''
       }
 
       if (smsMessage && recipientPhone) {
@@ -147,20 +155,18 @@ export default function Dashboard() {
         grade: 'A',
         brand: '',
         description: '',
-        imageUrls: '',
-        images: []
+        imageUrls: ''
       })
     } catch (err) {
       console.error(err)
       alert('Error adding listing')
-    } finally {
-      setSubmitting(false)
     }
+    setSubmitting(false)
   }
 
   if (loading) return (
     <div className="min-h-screen bg-soft-black flex items-center justify-center">
-      <div className="font-bubbly text-4xl animate-pulse text-lime">THRIFTR...</div>
+      <div className="font-bubbly text-4xl animate-pulse text-lime">LOADING...</div>
     </div>
   )
 
@@ -170,91 +176,90 @@ export default function Dashboard() {
       
       <main className="flex-1 pt-32 px-6">
         <div className="max-w-7xl mx-auto">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-16 gap-8">
-            <div>
-               <h1 className="font-fashion text-5xl md:text-7xl font-bold tracking-tighter uppercase mb-2">
-                 {store ? store.name.toUpperCase() : 'YOUR ORDERS'}
-               </h1>
-               <p className="font-editorial italic text-xl text-muted-gray">
-                 {store ? 'Managing your boutique storefront.' : 'Tracking your curated purchases.'}
-               </p>
+          {/* Header */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 mb-16">
+            <div className="flex items-center gap-6">
+              <div className="w-20 h-20 bg-charcoal rounded-full border border-white/10 flex items-center justify-center text-lime">
+                {store ? <Store size={32} /> : <User size={32} />}
+              </div>
+              <div>
+                <h1 className="font-fashion text-5xl md:text-7xl font-bold tracking-tighter uppercase leading-none">
+                  {store ? store.name : profile?.name || 'MY ACCOUNT'}
+                </h1>
+                <p className="font-editorial italic text-xl text-muted-gray">
+                  {store ? 'Boutique Dashboard' : 'Buyer Profile & Orders'}
+                </p>
+              </div>
             </div>
             
             {store && (
               <button 
                 onClick={() => setIsModalOpen(true)}
-                className="bg-lime text-black font-display font-black text-sm px-8 py-4 rounded-full flex items-center gap-2 hover:scale-105 transition-transform"
+                className="bg-lime text-black font-display font-black text-xs px-10 py-5 rounded-full flex items-center gap-2 hover:scale-105 transition-all"
               >
-                <Plus size={16} /> ADD LISTING
+                <Plus size={18} /> ADD LISTING
               </button>
             )}
           </div>
 
-          {store && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
-              <div className="bg-charcoal p-8 rounded-sm border border-white/5">
-                <DollarSign className="text-lime mb-4" size={24} />
-                <span className="font-display font-black text-3xl block mb-1">{formatCurrency(orders.filter(o => o.status === 'completed').reduce((acc, o) => acc + o.total_amount, 0))}</span>
-                <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Released Earnings</span>
-              </div>
-              <div className="bg-charcoal p-8 rounded-sm border border-white/5">
-                <Package className="text-lime mb-4" size={24} />
-                <span className="font-display font-black text-3xl block mb-1">{listings.length}</span>
-                <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Active Listings</span>
-              </div>
-              <div className="bg-charcoal p-8 rounded-sm border border-white/5">
-                <ShoppingBag className="text-lime mb-4" size={24} />
-                <span className="font-display font-black text-3xl block mb-1">{orders.length}</span>
-                <span className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Total Orders</span>
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-10 border-b border-white/5 mb-12 font-display text-xs font-bold uppercase tracking-widest overflow-x-auto no-scrollbar">
-            {store && (
-              <button 
-                onClick={() => setActiveTab('inventory')}
-                className={cn("pb-4 transition-all", activeTab === 'inventory' ? "text-lime border-b-2 border-lime" : "text-white/30 hover:text-white")}
-              >
-                Inventory
-              </button>
-            )}
-            <button 
-              onClick={() => setActiveTab('orders')}
-              className={cn("pb-4 transition-all", activeTab === 'orders' ? "text-lime border-b-2 border-lime" : "text-white/30 hover:text-white")}
-            >
-              {store ? 'Sales' : 'My Purchases'}
-            </button>
+          {/* Stats & Tabs */}
+          <div className="flex flex-wrap gap-4 mb-10 border-b border-white/5 pb-10">
+             {store && (
+                <button
+                  onClick={() => setActiveTab('listings')}
+                  className={cn(
+                    "font-display font-black text-xs uppercase tracking-widest px-8 py-4 rounded-sm transition-all",
+                    activeTab === 'listings' ? "bg-white text-black" : "text-white/40 hover:text-white"
+                  )}
+                >
+                  Listings ({listings.length})
+                </button>
+             )}
+             <button
+               onClick={() => setActiveTab('orders')}
+               className={cn(
+                 "font-display font-black text-xs uppercase tracking-widest px-8 py-4 rounded-sm transition-all",
+                 activeTab === 'orders' ? "bg-white text-black" : "text-white/40 hover:text-white"
+               )}
+             >
+               Orders ({orders.length})
+             </button>
           </div>
 
-          {activeTab === 'inventory' && store && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-               {listings.map(listing => (
-                 <div key={listing.id} className="bg-charcoal border border-white/5 rounded-sm p-4 group">
-                    <div className="relative aspect-[4/5] bg-soft-black rounded-sm overflow-hidden mb-4">
-                       <Image src={listing.images?.[0] || ''} alt="" fill className="object-cover grayscale group-hover:grayscale-0 transition-all duration-500" />
-                    </div>
-                    <h4 className="font-display font-bold text-xs uppercase mb-2 truncate">{listing.name}</h4>
-                    <div className="flex justify-between items-center">
-                       <span className="font-display font-black text-sm">{formatCurrency(listing.price)}</span>
-                       <span className={cn(
-                         "text-[9px] font-black px-2 py-1 rounded-sm uppercase",
-                         listing.status === 'available' ? "bg-lime text-black" : "bg-white/10 text-white/40"
-                       )}>{listing.status}</span>
-                    </div>
+          {/* Listings Tab */}
+          {activeTab === 'listings' && store && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in fade-in duration-500">
+               {listings.map(item => (
+                 <div key={item.id} className="bg-charcoal border border-white/5 rounded-sm overflow-hidden group">
+                   <div className="relative aspect-[4/5] overflow-hidden bg-soft-black">
+                     <Image
+                       src={item.images?.[0] || ''}
+                       alt={item.name}
+                       fill
+                       className="object-cover grayscale group-hover:grayscale-0 transition-all duration-700 group-hover:scale-110"
+                     />
+                     <div className="absolute top-4 left-4 bg-lime text-black font-display font-black text-[10px] px-2 py-1 rounded-sm uppercase tracking-tighter">
+                       {item.status}
+                     </div>
+                   </div>
+                   <div className="p-6">
+                      <h4 className="font-display font-bold text-sm uppercase mb-1 truncate">{item.name}</h4>
+                      <p className="font-display font-black text-lime">{formatCurrency(item.price)}</p>
+                   </div>
                  </div>
                ))}
             </div>
           )}
 
+          {/* Orders Tab */}
           {activeTab === 'orders' && (
-            <div className="space-y-4">
+            <div className="space-y-4 animate-in fade-in duration-500">
                {orders.length > 0 ? (
                  orders.map(order => (
-                   <div key={order.id} className="bg-charcoal border border-white/5 rounded-sm p-8 flex flex-col md:flex-row gap-8 items-center justify-between">
-                      <div className="flex gap-6 items-center">
-                         <div className="w-16 h-20 bg-soft-black rounded-sm overflow-hidden relative flex-shrink-0">
-                            <Image src={order.listing_image || ''} alt="" fill className="object-cover grayscale" />
+                   <div key={order.id} className="bg-charcoal border border-white/5 rounded-sm p-8 flex flex-col md:flex-row items-center justify-between gap-10">
+                      <div className="flex items-center gap-6 w-full md:w-auto">
+                         <div className="relative w-16 h-20 bg-soft-black rounded-sm overflow-hidden flex-shrink-0">
+                           <Image src={order.listing_image || ''} alt="" fill className="object-cover grayscale" />
                          </div>
                          <div>
                             <h4 className="font-display font-bold text-sm uppercase mb-1">{order.listing_name}</h4>
@@ -301,9 +306,16 @@ export default function Dashboard() {
                             <CheckCircle2 size={12} /> Confirm Receipt
                           </button>
                         )}
-                        <button className="text-white/30 hover:text-lime transition-colors">
-                          <ExternalLink size={20} />
-                        </button>
+                        {order.uber_tracking_url && (
+                           <a
+                             href={order.uber_tracking_url}
+                             target="_blank"
+                             rel="noopener noreferrer"
+                             className="text-white/30 hover:text-lime transition-colors"
+                           >
+                             <ExternalLink size={20} />
+                           </a>
+                        )}
                       </div>
                    </div>
                  ))
