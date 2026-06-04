@@ -55,7 +55,6 @@ export default function Admin() {
   const handleAppAction = async (app: any, status: 'approved' | 'rejected') => {
     setLoading(true)
     
-    // 1. Update application status
     const { error: appError } = await supabase.from('applications').update({ status }).eq('id', app.id)
     if (appError) {
       alert('Error updating application')
@@ -64,7 +63,6 @@ export default function Admin() {
     }
 
     if (status === 'approved') {
-      // 2. Create store for the user
       const slug = app.store_name.toLowerCase().replace(/[^a-z0-9]/g, '-')
       const { error: storeError } = await supabase.from('stores').insert({
         owner_id: app.user_id,
@@ -74,20 +72,16 @@ export default function Admin() {
         description: app.description,
         is_verified: true,
         status: 'verified',
-        contact_phone: app.phone,
-        whatsapp_phone: app.phone,
-        instagram: app.instagram,
+        phone: app.phone,
         logo_image: 'https://images.unsplash.com/photo-1558769132-cb1aea458c5e?q=80&w=1974&auto=format&fit=crop'
       })
 
       if (storeError) {
         console.error(storeError)
-        alert('Error creating store. Role not updated.')
+        alert('Error creating store.')
       } else {
-        // 3. Update profile role to 'owner'
         await supabase.from('profiles').update({ role: 'owner' }).eq('id', app.user_id)
         
-        // 4. Send SMS to the new Partner when a real contact number exists.
         if (app.phone) {
           try {
             await supabase.functions.invoke('sms', {

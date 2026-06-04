@@ -7,7 +7,7 @@ import Footer from '@/components/ui/Footer'
 import { supabase } from '@/lib/supabase'
 import { formatCurrency, cn } from '@/lib/utils'
 import Image from 'next/image'
-import { ArrowLeft, CreditCard, Truck, ShieldCheck, CheckCircle2, ShoppingBag, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, CreditCard, Truck, ShieldCheck, CheckCircle2, ShoppingBag, AlertTriangle, MapPin } from 'lucide-react'
 
 function CheckoutContent() {
   const searchParams = useSearchParams()
@@ -15,9 +15,11 @@ function CheckoutContent() {
   const id = searchParams.get('id')
   
   const [listing, setListing] = useState<any>(null)
+  const [store, setStore] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [deliveryMethod, setDeliveryMethod] = useState<'uber' | 'pickup'>('uber')
   const [phone, setPhone] = useState('')
+  const [address, setAddress] = useState('')
   const [processing, setProcessing] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [completedMessage, setCompletedMessage] = useState('')
@@ -29,7 +31,7 @@ function CheckoutContent() {
     async function fetchListing() {
       const { data, error } = await supabase
         .from('listings')
-        .select('*')
+        .select('*, stores(*)')
         .eq('id', id)
         .single()
 
@@ -37,6 +39,7 @@ function CheckoutContent() {
         console.error(error)
       } else {
         setListing(data)
+        setStore(data.stores)
       }
       setLoading(false)
     }
@@ -46,6 +49,10 @@ function CheckoutContent() {
 
   const handlePayment = async () => {
     if (!phone) return
+    if (deliveryMethod === 'uber' && !address) {
+        alert('Please provide a delivery address for Uber Direct.')
+        return
+    }
     if (deliveryMethod === 'uber' && isHighValue) {
       alert('Items over KES 5,000 cannot be delivered via Uber Direct for insurance reasons. Please choose Self-Pickup.')
       return
@@ -72,6 +79,8 @@ function CheckoutContent() {
         total_amount: listing.price + deliveryFee,
         delivery_method: deliveryMethod,
         phone_number: phone,
+        dropoff_address: address,
+        pickup_address: store?.location || store?.address,
         status: 'pending'
       }).select().single()
 
@@ -173,9 +182,38 @@ function CheckoutContent() {
           </div>
         </div>
 
+        {deliveryMethod === 'uber' && (
+          <div className="mb-16 animate-in slide-in-from-top-4 duration-300">
+            <h3 className="font-display font-bold text-xs uppercase tracking-widest text-white/40 mb-8 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full border border-white/20 flex items-center justify-center text-[10px]">2</span>
+              DELIVERY ADDRESS
+            </h3>
+            <div className="bg-charcoal p-10 rounded-sm border border-white/5">
+              <div className="flex items-center gap-4 mb-8">
+                <MapPin className="text-lime" />
+                <div>
+                  <h4 className="font-display font-bold text-sm">Nairobi Delivery</h4>
+                  <p className="text-xs text-muted-gray">Please provide specific details (Building, Apt/Office).</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-display text-[10px] font-bold text-white/30 uppercase tracking-widest mb-3 block">Dropoff Address</label>
+                <textarea
+                  rows={3}
+                  placeholder="e.g. Greenhouse Mall, 3rd Floor, Suite 12. Ngong Road, Nairobi."
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                  className="w-full bg-soft-black border border-white/10 rounded-sm px-6 py-4 font-display text-sm focus:outline-none focus:border-lime transition-all resize-none"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="mb-16">
           <h3 className="font-display font-bold text-xs uppercase tracking-widest text-white/40 mb-8 flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full border border-white/20 flex items-center justify-center text-[10px]">2</span>
+            <span className="w-6 h-6 rounded-full border border-white/20 flex items-center justify-center text-[10px]">{deliveryMethod === 'uber' ? '3' : '2'}</span>
             PAYMENT METHOD
           </h3>
           <div className="bg-charcoal p-10 rounded-sm border border-white/5">
@@ -235,7 +273,7 @@ function CheckoutContent() {
 
           <button 
             onClick={handlePayment}
-            disabled={!phone || processing || (deliveryMethod === 'uber' && isHighValue)}
+            disabled={!phone || processing || (deliveryMethod === 'uber' && (!address || isHighValue))}
             className="w-full bg-lime text-black font-display font-black text-sm py-6 rounded-full mb-8 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] transition-all flex items-center justify-center gap-3"
           >
             {processing ? "PROCESSING..." : `PAY ${formatCurrency((listing?.price || 0) + deliveryFee)}`}
