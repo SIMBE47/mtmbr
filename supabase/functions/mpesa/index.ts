@@ -37,10 +37,73 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const { action, phoneNumber, orderId } = await req.json()
 
       if (action !== "stkpush") {
         return new Response(JSON.stringify({ error: "Invalid action" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      if (!orderId) {
+        return new Response(JSON.stringify({ error: "Missing order ID" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      // Security: Verify user identity via JWT
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""))
+
+      if (userError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized access" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      // Security: Fetch order from DB to get the REAL amount and verify ownership
+      // This prevents price manipulation from the client-side.
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .select("*")
+        .eq("id", orderId)
+        .single()
+
+      if (orderError || !order) {
+        return new Response(JSON.stringify({ error: "Order record not found" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      if (order.buyer_id !== user.id) {
+        return new Response(JSON.stringify({ error: "Access denied: Order ownership mismatch" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      if (order.status !== 'pending') {
+        return new Response(JSON.stringify({ error: "Payment can only be initiated for pending orders" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const cleanPhone = phoneNumber.replace(/[^0-9]/g, '')
+      if (!/^254[17][0-9]{8}$/.test(cleanPhone)) {
+         return new Response(JSON.stringify({ error: "Invalid Kenyan phone number format. Use 2547XXXXXXXX or 2541XXXXXXXX." }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
@@ -61,10 +124,10 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
-          PartyA:            phoneNumber,
+          Amount:            Math.ceil(order.total_amount),
+          PartyA:            cleanPhone,
           PartyB:            DARAJA_SHORTCODE,
-          PhoneNumber:       phoneNumber,
+          PhoneNumber:       cleanPhone,
           CallBackURL:       DARAJA_CALLBACK_URL,
           AccountReference:  "THRIFTR",
           TransactionDesc:   `Order ${orderId}`,
@@ -74,8 +137,7 @@ serve(async (req) => {
       const result = await res.json()
 
       // Store the checkout request ID on the order so we can match the callback
-      if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      if (result.CheckoutRequestID) {
         await supabase
           .from("orders")
           .update({
@@ -89,7 +151,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      console.error("Payment initiation error:", err)
+      return new Response(JSON.stringify({ error: "An internal error occurred while initiating payment" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
