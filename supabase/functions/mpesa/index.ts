@@ -37,7 +37,15 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get('Authorization')
+      if (!authHeader) return new Response(JSON.stringify({ error: "Missing Authorization header" }), { status: 401, headers: corsHeaders })
+
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const token = authHeader.replace("Bearer ", "")
+      const { data: { user }, error: userError } = await supabase.auth.getUser(token)
+      if (userError || !user) return new Response(JSON.stringify({ error: "Invalid token" }), { status: 401, headers: corsHeaders })
+
+      const { action, phoneNumber, orderId } = await req.json()
 
       if (action !== "stkpush") {
         return new Response(JSON.stringify({ error: "Invalid action" }), {
@@ -45,6 +53,17 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
+
+      // ✅ SECURITY: Fetch order from DB to verify owner and prevent price manipulation
+      const { data: order, error: orderFetchError } = await supabase
+        .from('orders')
+        .select('total_amount, buyer_id, status')
+        .eq('id', orderId)
+        .single()
+
+      if (orderFetchError || !order) return new Response(JSON.stringify({ error: "Order not found" }), { status: 404, headers: corsHeaders })
+      if (order.buyer_id !== user.id) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 403, headers: corsHeaders })
+      if (order.status !== 'pending') return new Response(JSON.stringify({ error: "Order is not in pending status" }), { status: 400, headers: corsHeaders })
 
       const accessToken = await getAccessToken()
       const timestamp   = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14)
@@ -61,7 +80,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -75,7 +94,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({

@@ -1,0 +1,4 @@
+## 2025-05-22 - [CRITICAL] M-Pesa Price Manipulation & Unauthorized Trigger
+**Vulnerability:** The `mpesa` Edge Function accepted a client-provided `amount` and `orderId` without verifying the user's identity or validating the amount against the database. An attacker could trigger an M-Pesa STK push for any order with an arbitrary (potentially much lower) amount.
+**Learning:** Supabase Edge Functions do not automatically verify JWTs unless specifically configured (e.g. via middleware or manual check). In a checkout flow, the "source of truth" for prices must always be the server-side database, never the client's request body.
+**Prevention:** Always verify the `Authorization` header JWT using `supabase.auth.getUser(token)` and fetch transaction-critical data (like price/amount) directly from the database using a Service Role client after verifying ownership.
