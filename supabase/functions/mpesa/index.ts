@@ -37,7 +37,7 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const { action, phoneNumber, orderId } = await req.json()
 
       if (action !== "stkpush") {
         return new Response(JSON.stringify({ error: "Invalid action" }), {
@@ -45,6 +45,26 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
+
+      // Security: Verify user identity via JWT
+      const authHeader = req.headers.get('Authorization')
+      if (!authHeader) throw new Error("Missing Authorization header")
+
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const token = authHeader.replace('Bearer ', '')
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+      if (authError || !user) throw new Error("Unauthorized")
+
+      // Security: Fetch real order details from DB to prevent price manipulation
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .select("total_amount, buyer_id, status")
+        .eq("id", orderId)
+        .single()
+
+      if (orderError || !order) throw new Error("Order not found")
+      if (order.buyer_id !== user.id) throw new Error("Unauthorized: Order ownership mismatch")
+      if (order.status !== 'pending') throw new Error("Order is not in pending status")
 
       const accessToken = await getAccessToken()
       const timestamp   = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14)
@@ -61,7 +81,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -75,7 +95,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
