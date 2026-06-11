@@ -1,0 +1,4 @@
+## 2025-05-15 - Price Manipulation and Unauthenticated Edge Functions
+**Vulnerability:** Supabase Edge Functions (`mpesa`, `sms`, `uber`) were publicly accessible without JWT verification. Additionally, the `mpesa` function trusted a client-provided `amount` for payment processing, and the `orders` table allowed users to insert any `total_amount`.
+**Learning:** Supabase Edge Functions do not automatically verify the `Authorization` header's JWT; it must be manually verified using `supabase.auth.getUser(token)`. Trusting client-side calculations for financial transactions is a critical risk.
+**Prevention:** Always verify JWT in Edge Functions. For payments, always fetch the source of truth (order amount) from the database using a service role, and verify that the authenticated user owns the record being processed.
