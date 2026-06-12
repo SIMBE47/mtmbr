@@ -39,6 +39,13 @@ serve(async (req) => {
 
     const { to, message } = await req.json()
 
+    if (!to || !message) {
+      return new Response(JSON.stringify({ error: "Missing to or message" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+
     const res = await fetch("https://api.africastalking.com/version1/messaging", {
       method: "POST",
       headers: {
@@ -56,7 +63,8 @@ serve(async (req) => {
     const result = await res.json()
     return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } })
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("SMS Error:", err)
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })

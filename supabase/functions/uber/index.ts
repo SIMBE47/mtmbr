@@ -54,6 +54,13 @@ serve(async (req) => {
 
     const { pickupAddress, dropoffAddress, itemDescription, itemValue } = await req.json()
 
+    if (!pickupAddress || !dropoffAddress) {
+      return new Response(JSON.stringify({ error: "Missing address information" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      })
+    }
+
     const accessToken = await getUberToken()
 
     const res = await fetch("https://api.uber.com/v1/eats/deliveries", {
@@ -76,7 +83,8 @@ serve(async (req) => {
     const result = await res.json()
     return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } })
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("Uber Error:", err)
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     })
