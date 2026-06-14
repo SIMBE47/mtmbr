@@ -8,3 +8,10 @@
 2. For payment functions, fetch the amount and ownership details directly from the database using `SUPABASE_SERVICE_ROLE_KEY` to bypass RLS and ensure the data hasn't been manipulated by the client.
 3. Validate that the authenticated user owns the resource they are acting upon (e.g., `order.buyer_id === user.id`).
 4. Explicitly check for the presence of the `Authorization` header to avoid runtime errors when extracting the token.
+
+## 2025-05-15 - CI Build Failures due to Environment Variable Validation
+**Vulnerability:** Not a direct security vulnerability, but a CI/CD reliability issue that can block security patches. Next.js prerendering fails if required environment variables (like Supabase keys) are missing or undefined during the build process.
+
+**Learning:** When using libraries that perform strict validation of environment variables at startup (like the `lib/supabase.ts` client in this project), CI workflows must provide placeholder values if the real secrets are not available. This ensures that the build/lint steps can proceed even in forks or PRs where secrets are restricted.
+
+**Prevention:** Always provide fallback/placeholder values in the GitHub Actions workflow for required environment variables during the `npm run build` step: `VARIABLE: ${{ secrets.VARIABLE || 'placeholder' }}`.
