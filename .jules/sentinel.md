@@ -1,0 +1,4 @@
+## 2025-05-15 - [CRITICAL] Price Manipulation in Payment Edge Functions
+**Vulnerability:** The M-Pesa Edge Function previously accepted the `amount` from the client request body. This allowed a malicious user to modify the price in the frontend or via a direct API call to pay a lower amount (e.g., 1 KES instead of the actual price).
+**Learning:** Edge Functions acting as payment gateways must never trust client-provided financial data. The frontend should only provide a reference (like `orderId`), and the backend must fetch the source of truth (the price) directly from the database using a secure (Service Role) client.
+**Prevention:** Always perform server-side validation of transaction amounts against the database. Additionally, verify the authenticated user's identity and ownership of the resource (IDOR check) before processing sensitive operations.
