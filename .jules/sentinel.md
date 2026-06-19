@@ -1,4 +1,4 @@
-## 2025-05-15 - Hardening M-Pesa Edge Function: JWT Verification & Price Validation
+## 2025-05-13 - Hardening M-Pesa Edge Function: JWT Verification & Price Validation
 
 **Vulnerability:** The M-Pesa Edge Function was vulnerable to price manipulation by trusting the `amount` field provided in the client request. It also lacked JWT verification, potentially allowing unauthorized payment attempts.
 
