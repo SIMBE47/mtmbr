@@ -37,14 +37,22 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get('Authorization')
+      if (!authHeader) throw new Error("401:Missing Authorization header")
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        })
-      }
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authHeader.replace('Bearer ', ''))
+      if (userError || !user) throw new Error("401:Invalid or expired token")
+
+      const { action, phoneNumber, orderId } = await req.json()
+      if (action !== "stkpush") throw new Error("400:Invalid action")
+
+      // Security: Fetch order from DB to verify amount and ownership
+      const { data: order, error: orderError } = await supabase
+        .from("orders").select("total_amount, buyer_id").eq("id", orderId).single()
+
+      if (orderError || !order) throw new Error("404:Order not found")
+      if (order.buyer_id !== user.id) throw new Error("403:Unauthorized")
 
       const accessToken = await getAccessToken()
       const timestamp   = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14)
@@ -61,7 +69,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -88,9 +96,11 @@ serve(async (req) => {
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
-    } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
-        status: 500,
+    } catch (err: any) {
+      const [code, msg] = String(err.message || err).split(':')
+      const status = parseInt(code) || 500
+      return new Response(JSON.stringify({ error: msg || "An unexpected error occurred" }), {
+        status,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
