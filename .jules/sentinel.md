@@ -1,0 +1,4 @@
+## 2026-06-24 - Payment Price Manipulation in Edge Functions
+**Vulnerability:** Payment Edge Functions that trust client-provided `amount` or `total_amount` values are vulnerable to price manipulation. An attacker can modify the request body to pay a nominal amount for an expensive item.
+**Learning:** Even if the frontend correctly calculates the total (e.g., listing price + delivery fee), an attacker can bypass the frontend and call the Edge Function directly with a forged payload.
+**Prevention:** Edge Functions handling payments must never trust the price sent from the client. Instead, they should fetch the authoritative amount from the database using a `Service Role` client after verifying the user's identity via JWT and confirming they own the transaction (e.g., `order.buyer_id === user.id`).
