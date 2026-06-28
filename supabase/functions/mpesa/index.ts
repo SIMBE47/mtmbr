@@ -37,13 +37,31 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) return new Response("Unauthorized", { status: 401, headers: corsHeaders })
+
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user } } = await supabase.auth.getUser(authHeader.replace(/Bearer /i, "").trim())
+      if (!user) return new Response("Unauthorized", { status: 401, headers: corsHeaders })
+
+      const { action, phoneNumber, orderId } = await req.json()
 
       if (action !== "stkpush") {
         return new Response(JSON.stringify({ error: "Invalid action" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
+      }
+
+      // Fetch authoritative amount from DB to prevent price manipulation
+      const { data: order } = await supabase
+        .from("orders")
+        .select("total_amount, buyer_id")
+        .eq("id", orderId)
+        .single()
+
+      if (!order || order.buyer_id !== user.id) {
+        return new Response("Order not found or access denied", { status: 404, headers: corsHeaders })
       }
 
       const accessToken = await getAccessToken()
@@ -61,7 +79,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -75,7 +93,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
