@@ -1,4 +1,4 @@
-## 2026-07-01 - Payment Price Manipulation in Edge Functions
+## 2026-07-06 - Payment Price Manipulation in Edge Functions
 **Vulnerability:** Supabase Edge Functions often trust client-provided data (like transaction amounts) without server-side validation. In this case, the `mpesa` function accepted an `amount` parameter from the frontend, allowing a malicious actor to initiate an STK push for a lower price than the item's actual cost.
 **Learning:** Supabase Edge Functions do not automatically enforce JWT verification or ownership checks. Even if the frontend is secure, the backend functions are public endpoints that must independently verify the user's identity and the integrity of the request data against the database.
 **Prevention:** Always verify the `Authorization` header in Edge Functions using `supabase.auth.getUser()`. Fetch sensitive data (prices, user IDs, status) directly from the database using the Service Role to bypass RLS for authoritative validation.
