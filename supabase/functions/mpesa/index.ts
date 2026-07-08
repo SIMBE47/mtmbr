@@ -15,7 +15,6 @@ const SUPABASE_URL           = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 
 // Use sandbox in dev, production in live
-// Change to "https://api.safaricom.co.ke" when you go live
 const DARAJA_BASE = "https://sandbox.safaricom.co.ke"
 
 async function getAccessToken(): Promise<string> {
@@ -35,14 +34,56 @@ serve(async (req) => {
   const url = new URL(req.url)
 
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
-  if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
+  if (req.method === "POST" && (url.pathname.endsWith("/mpesa") || url.pathname.endsWith("/mpesa/"))) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get('Authorization')
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "No authorization header" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        })
+      }
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const token = authHeader.replace(/Bearer /i, '').trim()
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        })
+      }
+
+      const { action, phoneNumber, orderId } = await req.json()
+
+      if (action !== "stkpush" || !orderId) {
+        return new Response(JSON.stringify({ error: "Invalid action or missing orderId" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      // 🔐 SECURE: Fetch order from DB to get authoritative amount and owner
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .select("total_amount, buyer_id, status")
+        .eq("id", orderId)
+        .single()
+
+      if (orderError || !order) {
+        return new Response(JSON.stringify({ error: "Order not found" }), {
+          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        })
+      }
+
+      // 🛡️ Sentinel: Verify requester is the buyer and order is pending
+      if (order.buyer_id !== user.id) {
+        return new Response(JSON.stringify({ error: "Forbidden: Not your order" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" }
+        })
+      }
+
+      if (order.status !== 'pending') {
+        return new Response(JSON.stringify({ error: `Order is already ${order.status}` }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" }
         })
       }
 
@@ -61,7 +102,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount), // Use DB amount
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -73,9 +114,7 @@ serve(async (req) => {
 
       const result = await res.json()
 
-      // Store the checkout request ID on the order so we can match the callback
-      if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      if (result.CheckoutRequestID) {
         await supabase
           .from("orders")
           .update({
@@ -89,16 +128,14 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     }
   }
 
-  // ── CALLBACK — Safaricom calls this when payment is confirmed or fails ──────
-  // URL: https://your-project.supabase.co/functions/v1/mpesa/callback
-  if (req.method === "POST" && url.pathname.endsWith("/callback")) {
+  // ── CALLBACK — Safaricom calls this (Unauthenticated by design) ──────────────
+  if (req.method === "POST" && (url.pathname.endsWith("/callback") || url.pathname.endsWith("/callback/"))) {
     try {
       const body          = await req.json()
       const stkCallback   = body?.Body?.stkCallback
@@ -111,37 +148,31 @@ serve(async (req) => {
       const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
       if (ResultCode === 0) {
-        // ✅ Payment successful — update order to PAID, mark listing as sold
         const { data: order } = await supabase
           .from("orders")
           .update({ status: "paid" })
           .eq("daraja_checkout_request_id", CheckoutRequestID)
-          .select("id, listing_id, store_id, total_amount, buyer_id")
+          .select("id, listing_id")
           .single()
 
         if (order) {
-          // Mark listing as reserved so no one else can buy it
           await supabase
             .from("listings")
             .update({ status: "reserved" })
             .eq("id", order.listing_id)
         }
       } else {
-        // ❌ Payment failed or cancelled — reset order to pending
         await supabase
           .from("orders")
           .update({ status: "cancelled" })
           .eq("daraja_checkout_request_id", CheckoutRequestID)
       }
 
-      // Always return 200 to Safaricom or they'll retry
       return new Response(
         JSON.stringify({ ResultCode: 0, ResultDesc: "Accepted" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       )
     } catch (err) {
-      console.error("M-Pesa callback error:", err)
-      // Still return 200 — Safaricom retries on non-200 responses
       return new Response(
         JSON.stringify({ ResultCode: 0, ResultDesc: "Accepted" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
