@@ -1,0 +1,4 @@
+## 2026-07-12 - Unauthenticated Edge Function & Price Manipulation
+**Vulnerability:** Supabase Edge Functions (mpesa, sms, uber) were exposed without authentication. Specifically, the mpesa function trusted a client-provided 'amount' for payments, allowing attackers to initiate STK Pushes for any order at any price (e.g., KES 1).
+**Learning:** Supabase Edge Functions do not automatically enforce authentication; they require manual JWT verification from the 'Authorization' header. Relying on client-provided data for financial transactions without server-side validation from the database is a critical flaw.
+**Prevention:** Always verify the user's JWT in Edge Functions. Fetch sensitive transaction data (like amounts) directly from the database using the Service Role after validating that the order belongs to the authenticated user and is in the correct state.
