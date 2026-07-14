@@ -1,0 +1,4 @@
+## 2026-07-12 - Hardening M-Pesa Edge Function
+**Vulnerability:** Unauthenticated and unauthorized access to the M-Pesa payment initiation endpoint allowed for potential price manipulation and unauthorized use of third-party API credits.
+**Learning:** Supabase Edge Functions do not automatically verify the user's JWT. Authenticated clients should pass the JWT in the Authorization header, and the function must manually verify it using `supabase.auth.getUser()`. Sensitive transaction data (like payment amounts) should never be trusted from the client and must be fetched directly from the database using a Service Role client to ensure integrity.
+**Prevention:** Always implement JWT verification in Edge Functions that handle user-specific data or sensitive operations. Use the Service Role to perform server-side validation against the database.
