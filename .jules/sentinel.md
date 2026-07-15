@@ -1,0 +1,4 @@
+## 2026-07-12 - Client-side Trust in Edge Functions (Price Manipulation)
+**Vulnerability:** The `mpesa` Edge Function accepted the payment `amount` directly from the client request body. It also lacked authentication/authorization checks. This allowed a malicious user to trigger an STK push for any amount (e.g., KES 1) for an expensive order and bypassed any user verification.
+**Learning:** Edge Functions acting as payment gateways must never trust price/amount data from the client. They should serve as a secure bridge that validates the transaction against the database (the source of truth) using a server-side client (Service Role).
+**Prevention:** Always verify the user's JWT in Edge Functions. Fetch sensitive transaction data (like amounts) directly from the database using the order ID provided by the client, and verify that the requesting user owns the order.
