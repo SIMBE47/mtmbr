@@ -37,10 +37,40 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get("authorization")
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized: Missing token" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
 
+      const { action, amount, phoneNumber, orderId } = await req.json()
       if (action !== "stkpush") {
         return new Response(JSON.stringify({ error: "Invalid action" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.replace(/^Bearer /i, "").trim())
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized: Invalid token" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      // Validate database order details to prevent price/amount manipulation
+      const { data: order, error: orderErr } = await supabase
+        .from("orders")
+        .select("total_amount, status, buyer_id")
+        .eq("id", orderId)
+        .single()
+
+      if (orderErr || !order || order.status !== "pending" || order.buyer_id !== user.id || Math.ceil(order.total_amount) !== Math.ceil(amount)) {
+        return new Response(JSON.stringify({ error: "Invalid request parameters or amount mismatch" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
@@ -75,7 +105,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
