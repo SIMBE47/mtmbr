@@ -35,15 +35,33 @@ serve(async (req) => {
   const url = new URL(req.url)
 
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
-  if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
+  if (req.method === "POST" && (url.pathname.endsWith("/mpesa") || url.pathname.endsWith("/mpesa/"))) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const token = authHeader.replace(/^Bearer /i, "").trim();
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+      const { data: { user } } = await supabase.auth.getUser(token);
+      const { action, amount, phoneNumber, orderId } = await req.json();
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
+      if (!user || action !== "stkpush") {
+        return new Response(JSON.stringify({ error: "Unauthorized or Invalid action" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { data: order } = await supabase.from("orders").select("total_amount, buyer_id, status").eq("id", orderId).single();
+      if (!order || order.buyer_id !== user.id || order.status !== "pending" || Math.ceil(amount) !== Math.ceil(order.total_amount)) {
+        return new Response(JSON.stringify({ error: "Invalid order or amount mismatch" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
-        })
+        });
       }
 
       const accessToken = await getAccessToken()
