@@ -35,15 +35,23 @@ serve(async (req) => {
   const url = new URL(req.url)
 
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
-  if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
+  if (req.method === "POST" && (url.pathname.endsWith("/mpesa") || url.pathname.endsWith("/mpesa/"))) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const auth = req.headers.get("Authorization")
+      if (!auth) return new Response(JSON.stringify({ error: "Missing Authorization" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } })
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        })
+      const token = auth.replace(/^Bearer /i, "").trim()
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
+      if (authErr || !user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } })
+
+      const { action, phoneNumber, orderId } = await req.json()
+      if (action !== "stkpush") return new Response(JSON.stringify({ error: "Invalid action" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } })
+
+      // Verify and validate order details securely from DB to prevent client price/data manipulation
+      const { data: order, error: orderErr } = await supabase.from("orders").select("total_amount, buyer_id, status").eq("id", orderId).single()
+      if (orderErr || !order || order.status !== "pending" || order.buyer_id !== user.id) {
+        return new Response(JSON.stringify({ error: "Invalid order state" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } })
       }
 
       const accessToken = await getAccessToken()
@@ -61,7 +69,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -75,7 +83,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
@@ -89,7 +96,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      console.error("M-Pesa payment error:", err)
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })

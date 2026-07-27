@@ -1,0 +1,4 @@
+## 2026-07-12 - Secure payment state and JWT authentication in M-Pesa Edge Function
+**Vulnerability:** The M-Pesa Edge Function accepted the checkout amount directly from the client request payload and had no JWT authentication verification, making it susceptible to price manipulation, request tampering, and payment request spamming.
+**Learning:** It existed because initial integrations prioritized client convenience over secure server-side verification, relying on client-side state for processing payment amounts rather than querying the database securely.
+**Prevention:** Always authenticate the incoming request using the client's JWT to match user context, and resolve the payment details directly from the DB using a service-role Supabase client to enforce strict transaction validation on the backend.
