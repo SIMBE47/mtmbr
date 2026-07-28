@@ -1,0 +1,4 @@
+## 2026-07-12 - Payment Amount and User Authorization Bypass in M-Pesa STK Push
+**Vulnerability:** The M-Pesa edge function trusted the client-provided amount and did not check if the user requesting the STK push was the actual buyer of the order, or if the order was in a valid 'pending' state. This allowed malicious actors to manipulate the checkout amount and execute payment bypasses or initiate fraudulent STK pushes on other users' orders.
+**Learning:** Edge Functions acting as payment gateway integrations must never trust client-provided values (like price or amount) or skip identity verification. Relying on frontend parameters for financial transactions creates critical price manipulation gaps.
+**Prevention:** Always authenticate the user's JWT inside the Edge Function using `supabase.auth.getUser(token)`, fetch the source of truth (the order) from the secure database using the service role key, and use the database-stored amount for the payment gateway.
