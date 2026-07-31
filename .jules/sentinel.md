@@ -1,0 +1,6 @@
+# Sentinel Security Journal
+
+## 2026-07-12 - Hardening Payments Edge Function & Database-Side Amount Verification
+**Vulnerability:** The unauthenticated `mpesa` payments Edge Function permitted arbitrary requests to trigger Safaricom STK Push events. Furthermore, the client could pass any custom `amount` and `orderId`, allowing malicious buyers to complete payments for arbitrary amounts (e.g., paying 1 KES for a 10,000 KES order).
+**Learning:** Edge Functions in Supabase do not enforce token authentication or database state validation by default unless explicitly programmed. While the frontend `supabase.functions.invoke` automatically passes the user's JWT in the `Authorization` header, the backend endpoint must explicitly parse and verify it via `supabase.auth.getUser()`, and validate checkout payloads against the true database values (e.g., matching the user's ID and enforcing the order's actual `total_amount`).
+**Prevention:** Always verify caller identities in Edge Functions using case-insensitive `Authorization` header extraction and `supabase.auth.getUser()`. Ensure that order/payment flows perform a database query using the `SUPABASE_SERVICE_ROLE_KEY` to fetch the true order total amount, status, and ownership, completely ignoring client-supplied monetary values.
