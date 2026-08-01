@@ -37,13 +37,17 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } })
+      const token = authHeader.replace(/^Bearer /i, "").trim()
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user }, error: userError } = await supabase.auth.getUser(token)
+      if (userError || !user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } })
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        })
+      const { action, amount, phoneNumber, orderId } = await req.json()
+      const { data: order } = await supabase.from("orders").select("*").eq("id", orderId).single()
+      if (action !== "stkpush" || !order || order.buyer_id !== user.id || order.status !== "pending" || Math.ceil(order.total_amount) !== Math.ceil(amount)) {
+        return new Response(JSON.stringify({ error: "Invalid request or order" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } })
       }
 
       const accessToken = await getAccessToken()
@@ -75,7 +79,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
@@ -89,7 +92,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      console.error("M-Pesa error:", err)
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
