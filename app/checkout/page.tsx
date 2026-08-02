@@ -80,13 +80,12 @@ function CheckoutContent() {
       const { data, error } = await supabase.functions.invoke('mpesa', {
         body: { 
           action: 'stkpush', 
-          amount: listing.price + deliveryFee, 
           phoneNumber: phone.replace(/[^0-9]/g, ''), 
           orderId: order.id 
         }
       })
 
-      if (error || data?.error || data?.ResponseCode !== '0' || !data?.CheckoutRequestID) {
+      if (error || data?.error || data?.ResponseCode !== '0' || !data?.MerchantRequestID) {
         console.error('M-Pesa Function error:', error || data)
         await supabase.from('orders').update({ status: 'cancelled' }).eq('id', order.id)
         alert(data?.errorMessage || data?.error || 'M-Pesa payment could not be started. Please try again.')
