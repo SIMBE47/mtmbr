@@ -37,11 +37,29 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const { action, phoneNumber, orderId } = await req.json()
 
       if (action !== "stkpush") {
         return new Response(JSON.stringify({ error: "Invalid action" }), {
           status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const auth = req.headers.get("Authorization")
+      if (!auth) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user } } = await db.auth.getUser(auth.replace(/^Bearer /i, "").trim())
+      const { data: order } = await db.from("orders").select("total_amount, buyer_id, status").eq("id", orderId).single()
+      if (!user || !order || order.buyer_id !== user.id || order.status !== "pending") {
+        return new Response(JSON.stringify({ error: "Access denied" }), {
+          status: 403,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
@@ -61,7 +79,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
