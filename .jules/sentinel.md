@@ -1,0 +1,4 @@
+## 2026-07-12 - [Critical M-Pesa Payment Security Hardening]
+**Vulnerability:** The M-Pesa Edge Function allowed unauthenticated STK Push requests and trusted the client-provided payment `amount` instead of validating it database-side. Any malicious user could craft a request with an arbitrary `amount` or trigger payment processing for other users' orders.
+**Learning:** Edge Functions in Supabase do not automatically verify user identities unless explicitly programmed to validate the `Authorization` header containing the user's JWT. When integrating payments or third-party gateways, client-side inputs must be treated as completely untrusted.
+**Prevention:** Always authenticate the caller in Edge Functions by verifying their Bearer token with the Supabase auth client, and retrieve or validate any critical data (such as transaction amounts or ownership status) directly from the database using a service role key.
