@@ -46,6 +46,20 @@ serve(async (req) => {
         })
       }
 
+      // Secure payment authorization and integrity checks
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders })
+      const token = authHeader.replace(/^Bearer /i, "").trim()
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
+      if (authErr || !user) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders })
+
+      const { data: order, error: orderErr } = await supabase.from("orders").select("total_amount, buyer_id, status").eq("id", orderId).single()
+      if (orderErr || !order) return new Response(JSON.stringify({ error: "Order not found" }), { status: 404, headers: corsHeaders })
+      if (order.buyer_id !== user.id) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders })
+      if (order.status !== "pending") return new Response(JSON.stringify({ error: "Order not pending" }), { status: 400, headers: corsHeaders })
+      if (Math.ceil(amount) !== Math.ceil(order.total_amount)) return new Response(JSON.stringify({ error: "Amount mismatch" }), { status: 400, headers: corsHeaders })
+
       const accessToken = await getAccessToken()
       const timestamp   = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14)
       const password    = btoa(`${DARAJA_SHORTCODE}${DARAJA_PASSKEY}${timestamp}`)
@@ -75,7 +89,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
