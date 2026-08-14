@@ -35,12 +35,60 @@ serve(async (req) => {
   const url = new URL(req.url)
 
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
-  if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
+  if (req.method === "POST" && (url.pathname.endsWith("/mpesa") || url.pathname.endsWith("/mpesa/"))) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      // 🛡️ Sentinel: Enforce authentication using JWT verification to prevent unauthenticated abuse
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "No authorization header" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const token = authHeader.replace(/^Bearer /i, "").trim()
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const { action, phoneNumber, orderId } = await req.json()
+
+      if (action !== "stkpush" || !orderId) {
+        return new Response(JSON.stringify({ error: "Invalid action or orderId" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      // 🛡️ Sentinel: Fetch authoritative order data from DB using service key to prevent price manipulation and ensure ownership
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .select("total_amount, buyer_id, status")
+        .eq("id", orderId)
+        .single()
+
+      if (orderError || !order) {
+        return new Response(JSON.stringify({ error: "Order not found" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      if (order.buyer_id !== user.id) {
+        return new Response(JSON.stringify({ error: "Forbidden: Order does not belong to you" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      if (order.status !== "pending") {
+        return new Response(JSON.stringify({ error: `Order is ${order.status}, not pending` }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
@@ -61,7 +109,8 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          // Use verified amount from database to mitigate price manipulation
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -75,7 +124,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
@@ -89,7 +137,9 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      // 🛡️ Sentinel: Secure error message to prevent leaking internal stack traces or database structures
+      console.error("STK push error:", err)
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
