@@ -14,8 +14,6 @@ const DARAJA_CALLBACK_URL    = Deno.env.get("DARAJA_CALLBACK_URL")!
 const SUPABASE_URL           = Deno.env.get("SUPABASE_URL")!
 const SUPABASE_SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 
-// Use sandbox in dev, production in live
-// Change to "https://api.safaricom.co.ke" when you go live
 const DARAJA_BASE = "https://sandbox.safaricom.co.ke"
 
 async function getAccessToken(): Promise<string> {
@@ -35,12 +33,44 @@ serve(async (req) => {
   const url = new URL(req.url)
 
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
-  if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
+  if (req.method === "POST" && (url.pathname.endsWith("/mpesa") || url.pathname.endsWith("/mpesa/"))) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
+      const token = authHeader.replace(/^Bearer /i, "").trim()
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: { user }, error: authErr } = await supabase.auth.getUser(token)
+
+      if (authErr || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const { action, phoneNumber, orderId } = await req.json()
+      if (action !== "stkpush" || !orderId) {
+        return new Response(JSON.stringify({ error: "Invalid request" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      // Verify order exists, belongs to user, and fetch trusted amount from DB
+      const { data: order, error: orderErr } = await supabase
+        .from("orders")
+        .select("total_amount, buyer_id, status")
+        .eq("id", orderId)
+        .single()
+
+      if (orderErr || !order || order.buyer_id !== user.id || order.status !== "pending") {
+        return new Response(JSON.stringify({ error: "Invalid or unauthorized order" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
@@ -61,7 +91,7 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
@@ -75,7 +105,6 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
         await supabase
           .from("orders")
           .update({
@@ -89,7 +118,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      console.error("STK Push error:", err)
+      return new Response(JSON.stringify({ error: "Internal server error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
