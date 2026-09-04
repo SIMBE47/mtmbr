@@ -12,6 +12,7 @@ const DARAJA_SHORTCODE       = Deno.env.get("DARAJA_SHORTCODE") || "174379"
 const DARAJA_PASSKEY         = Deno.env.get("DARAJA_PASSKEY")!
 const DARAJA_CALLBACK_URL    = Deno.env.get("DARAJA_CALLBACK_URL")!
 const SUPABASE_URL           = Deno.env.get("SUPABASE_URL")!
+const SUPABASE_ANON_KEY      = Deno.env.get("SUPABASE_ANON_KEY")!
 const SUPABASE_SERVICE_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 
 // Use sandbox in dev, production in live
@@ -35,20 +36,72 @@ serve(async (req) => {
   const url = new URL(req.url)
 
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
-  if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
+  if (req.method === "POST" && (url.pathname.endsWith("/mpesa") || url.pathname.endsWith("/mpesa/"))) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      // 1. Authenticate user from Authorization header
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
+      const token = authHeader.replace(/^Bearer /i, "").trim()
+      const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+      const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(token)
+
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const { action, phoneNumber, orderId } = await req.json()
+
+      if (action !== "stkpush" || !orderId || !phoneNumber) {
+        return new Response(JSON.stringify({ error: "Invalid parameters" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
       }
 
+      // 2. Validate order in DB and ensure user owns it and it's pending
+      const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const { data: order, error: orderError } = await supabaseAdmin
+        .from("orders")
+        .select("id, buyer_id, total_amount, status")
+        .eq("id", orderId)
+        .single()
+
+      if (orderError || !order) {
+        return new Response(JSON.stringify({ error: "Order not found" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      if (order.buyer_id !== user.id) {
+        return new Response(JSON.stringify({ error: "Forbidden: You do not own this order" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      if (order.status !== "pending") {
+        return new Response(JSON.stringify({ error: "Order is not pending payment" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      // 3. Trigger STK Push with authentic DB amount
       const accessToken = await getAccessToken()
       const timestamp   = new Date().toISOString().replace(/[-:T.Z]/g, "").slice(0, 14)
       const password    = btoa(`${DARAJA_SHORTCODE}${DARAJA_PASSKEY}${timestamp}`)
+
+      const cleanPhone = String(phoneNumber).replace(/[^0-9]/g, "")
 
       const res = await fetch(`${DARAJA_BASE}/mpesa/stkpush/v1/processrequest`, {
         method: "POST",
@@ -61,10 +114,10 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
-          PartyA:            phoneNumber,
+          Amount:            Math.ceil(order.total_amount),
+          PartyA:            cleanPhone,
           PartyB:            DARAJA_SHORTCODE,
-          PhoneNumber:       phoneNumber,
+          PhoneNumber:       cleanPhone,
           CallBackURL:       DARAJA_CALLBACK_URL,
           AccountReference:  "THRIFTR",
           TransactionDesc:   `Order ${orderId}`,
@@ -75,8 +128,7 @@ serve(async (req) => {
 
       // Store the checkout request ID on the order so we can match the callback
       if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-        await supabase
+        await supabaseAdmin
           .from("orders")
           .update({
             daraja_checkout_request_id: result.CheckoutRequestID,
@@ -89,7 +141,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      console.error("M-Pesa Edge Function Error:", err)
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
@@ -98,7 +151,7 @@ serve(async (req) => {
 
   // ── CALLBACK — Safaricom calls this when payment is confirmed or fails ──────
   // URL: https://your-project.supabase.co/functions/v1/mpesa/callback
-  if (req.method === "POST" && url.pathname.endsWith("/callback")) {
+  if (req.method === "POST" && (url.pathname.endsWith("/callback") || url.pathname.endsWith("/callback/"))) {
     try {
       const body          = await req.json()
       const stkCallback   = body?.Body?.stkCallback
