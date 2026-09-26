@@ -85,11 +85,15 @@ serve(async (req) => {
           .eq("id", orderId)
       }
 
-      return new Response(JSON.stringify(result), {
+      // Omit sensitive Safaricom IDs from client response to prevent spoofing
+      const { CheckoutRequestID, MerchantRequestID, ...safeResult } = result
+
+      return new Response(JSON.stringify(safeResult), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      console.error("M-Pesa error:", err)
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
