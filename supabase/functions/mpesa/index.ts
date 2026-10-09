@@ -103,7 +103,12 @@ serve(async (req) => {
       const body          = await req.json()
       const stkCallback   = body?.Body?.stkCallback
 
-      if (!stkCallback) {
+      if (
+        !stkCallback ||
+        typeof stkCallback.CheckoutRequestID !== "string" ||
+        !stkCallback.CheckoutRequestID.trim() ||
+        typeof stkCallback.ResultCode !== "number"
+      ) {
         return new Response("Invalid callback", { status: 400, headers: corsHeaders })
       }
 
