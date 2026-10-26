@@ -37,10 +37,37 @@ serve(async (req) => {
   // ── STK PUSH — called by frontend checkout ─────────────────────────────────
   if (req.method === "POST" && url.pathname.endsWith("/mpesa")) {
     try {
-      const { action, amount, phoneNumber, orderId } = await req.json()
+      const authHeader = req.headers.get("Authorization")
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
 
-      if (action !== "stkpush") {
-        return new Response(JSON.stringify({ error: "Invalid action" }), {
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      const token = authHeader.replace(/^Bearer /i, "").trim()
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        })
+      }
+
+      const { action, phoneNumber, orderId } = await req.json()
+
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .select("id, total_amount, buyer_id, status")
+        .eq("id", orderId)
+        .eq("buyer_id", user.id)
+        .eq("status", "pending")
+        .single()
+
+      if (action !== "stkpush" || orderError || !order) {
+        return new Response(JSON.stringify({ error: "Invalid order or request" }), {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         })
@@ -61,35 +88,35 @@ serve(async (req) => {
           Password:          password,
           Timestamp:         timestamp,
           TransactionType:   "CustomerPayBillOnline",
-          Amount:            Math.ceil(amount),
+          Amount:            Math.ceil(order.total_amount),
           PartyA:            phoneNumber,
           PartyB:            DARAJA_SHORTCODE,
           PhoneNumber:       phoneNumber,
           CallBackURL:       DARAJA_CALLBACK_URL,
           AccountReference:  "THRIFTR",
-          TransactionDesc:   `Order ${orderId}`,
+          TransactionDesc:   `Order ${order.id}`,
         }),
       })
 
       const result = await res.json()
 
       // Store the checkout request ID on the order so we can match the callback
-      if (result.CheckoutRequestID && orderId) {
-        const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+      if (result.CheckoutRequestID) {
         await supabase
           .from("orders")
           .update({
             daraja_checkout_request_id: result.CheckoutRequestID,
             daraja_merchant_request_id: result.MerchantRequestID,
           })
-          .eq("id", orderId)
+          .eq("id", order.id)
       }
 
       return new Response(JSON.stringify(result), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
     } catch (err) {
-      return new Response(JSON.stringify({ error: String(err) }), {
+      console.error("M-Pesa function error:", err)
+      return new Response(JSON.stringify({ error: "Internal Server Error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       })
