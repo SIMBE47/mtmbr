@@ -1,0 +1,6 @@
+# Sentinel Security Journal
+
+## 2026-07-12 - Critical Payment Amount Tampering and Missing Auth in M-Pesa Edge Function
+**Vulnerability:** The `mpesa` Edge Function accepted payment amount and orderId directly from untrusted client POST requests without validating the caller's JWT authentication or checking the database order record. An attacker or modified client could trigger STK push prompts for arbitrary amounts (e.g., KES 1 instead of KES 5000) or initiate unauthorized payments against any order.
+**Learning:** Supabase Edge Functions with CORS enabled can be invoked directly by any caller unless authorization headers are explicitly verified. In payment gateways like M-Pesa Daraja, trusting client-provided payment amounts opens severe business-logic and financial tampering vulnerabilities. The backend must always verify caller identity and treat the database order as the single source of truth for payment totals.
+**Prevention:** Always authenticate the user JWT via `supabase.auth.getUser()`, enforce order ownership (`buyer_id === user.id`), ensure order status is `pending`, and fetch the canonical payment amount directly from the database order before communicating with payment processors.
