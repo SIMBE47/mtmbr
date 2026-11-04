@@ -1,0 +1,6 @@
+# Sentinel Security Journal
+
+## 2026-07-12 - M-Pesa Edge Function Authentication and Client-Controlled Payment Amount Bypass
+**Vulnerability:** The M-Pesa STK push Edge Function (`/mpesa`) did not verify the caller's JWT `Authorization` header and directly accepted `amount` from the client request payload without verifying against the order in the database. An unauthenticated attacker could trigger STK push requests for arbitrary orders, and any user could modify the `amount` field in the client request to pay arbitrary or trivial amounts (e.g. KES 1) for expensive orders.
+**Learning:** In client-facing Supabase Edge Functions handling payments, accepting payment amounts directly from client-sent JSON payloads creates critical parameter tampering vulnerabilities. Even when orders are created in the database, the backend Edge Function must treat client-submitted pricing as untrusted.
+**Prevention:** Always authenticate the user via `supabase.auth.getUser()` using the bearer token, query the order record directly with `SUPABASE_SERVICE_ROLE_KEY`, verify order ownership (`order.buyer_id === user.id`) and status (`order.status === 'pending'`), and enforce the payment amount strictly from `order.total_amount`. Return generic error responses on failures to prevent leaking database or runtime exceptions.
