@@ -1,0 +1,4 @@
+## 2026-07-12 - Secure Payment Order Validation in Edge Functions
+**Vulnerability:** Unauthenticated/unauthorized access to M-Pesa STK Push payments, enabling client-side price/amount manipulation.
+**Learning:** Edge Functions in Supabase operate outside PostgreSQL RLS checks unless instantiated with the user's specific context. When using the `SUPABASE_SERVICE_ROLE_KEY` to perform server-side checks, we must explicitly validate the authenticated user identity via `auth.getUser(token)` and cross-reference records like orders to confirm they belong to the correct `buyer_id` and have a `pending` status before taking high-privilege third-party action.
+**Prevention:** Never trust client-provided parameters like `amount` or transaction payloads directly. Always fetch the authoritative record state from the database using service-role level queries that explicitly filter by user identity (e.g., `eq('buyer_id', user.id)`) and order status.
